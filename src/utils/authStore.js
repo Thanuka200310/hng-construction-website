@@ -1,6 +1,6 @@
-const CUSTOMER_KEY = "hng_current_customer_v1";
-const ADMIN_KEY = "hng_current_admin_v1";
 const ADMIN_USERS_KEY = "hng_admin_users_v1";
+const CURRENT_ADMIN_KEY = "hng_current_admin_v1";
+const CURRENT_CUSTOMER_KEY = "hng_current_customer_v1";
 
 const defaultAdmins = [
   {
@@ -12,68 +12,133 @@ const defaultAdmins = [
   },
 ];
 
-const storage = () => (typeof window === "undefined" ? null : window.localStorage);
-const uid = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function storage() {
+  if (typeof window === "undefined") return null;
+  return window.localStorage;
+}
 
-export function getCurrentCustomer() {
+function readJson(key, fallback) {
   try {
-    return JSON.parse(storage()?.getItem(CUSTOMER_KEY) || "null");
+    const value = storage()?.getItem(key);
+    return value ? JSON.parse(value) : fallback;
   } catch (error) {
-    return null;
+    return fallback;
   }
 }
 
-export function setCurrentCustomer(customer) {
-  storage()?.setItem(CUSTOMER_KEY, JSON.stringify(customer));
-}
-
-export function logoutCustomer() {
-  storage()?.removeItem(CUSTOMER_KEY);
+function writeJson(key, value) {
+  storage()?.setItem(key, JSON.stringify(value));
 }
 
 export function getAdminUsers() {
-  try {
-    return JSON.parse(storage()?.getItem(ADMIN_USERS_KEY) || JSON.stringify(defaultAdmins));
-  } catch (error) {
+  const admins = readJson(ADMIN_USERS_KEY, null);
+
+  if (!admins || !Array.isArray(admins) || admins.length === 0) {
+    writeJson(ADMIN_USERS_KEY, defaultAdmins);
     return defaultAdmins;
   }
+
+  return admins;
 }
 
-export function saveAdminUsers(admins) {
-  storage()?.setItem(ADMIN_USERS_KEY, JSON.stringify(admins));
+export function saveAdminUsers(users) {
+  writeJson(ADMIN_USERS_KEY, users);
 }
 
 export function addAdminUser(admin) {
   const admins = getAdminUsers();
-  const nextAdmin = { id: uid("admin"), role: "Admin", ...admin };
-  saveAdminUsers([nextAdmin, ...admins]);
-  return nextAdmin;
+
+  const exists = admins.some(
+    (item) => item.email.toLowerCase() === admin.email.toLowerCase()
+  );
+
+  if (exists) {
+    return {
+      success: false,
+      message: "Admin email already exists.",
+    };
+  }
+
+  const newAdmin = {
+    id: `admin-${Date.now()}`,
+    name: admin.name || "Admin",
+    email: admin.email,
+    password: admin.password,
+    role: admin.role || "Admin",
+  };
+
+  const updatedAdmins = [newAdmin, ...admins];
+  saveAdminUsers(updatedAdmins);
+
+  return {
+    success: true,
+    message: "Admin user added successfully.",
+    admin: newAdmin,
+  };
 }
 
 export function deleteAdminUser(id) {
-  const admins = getAdminUsers().filter((admin) => admin.id !== id);
-  saveAdminUsers(admins.length ? admins : defaultAdmins);
+  const admins = getAdminUsers();
+
+  if (id === "admin-default") {
+    return {
+      success: false,
+      message: "Default admin cannot be deleted.",
+    };
+  }
+
+  const updatedAdmins = admins.filter((admin) => admin.id !== id);
+  saveAdminUsers(updatedAdmins);
+
+  return {
+    success: true,
+    message: "Admin user deleted successfully.",
+  };
 }
 
 export function loginAdmin(email, password) {
   const admins = getAdminUsers();
-  const match = admins.find(
-    (admin) => admin.email.toLowerCase() === email.toLowerCase() && admin.password === password
+
+  const admin = admins.find(
+    (item) =>
+      item.email.toLowerCase() === email.toLowerCase() &&
+      item.password === password
   );
-  if (!match) return null;
-  const safeAdmin = { id: match.id, name: match.name, email: match.email, role: match.role };
-  storage()?.setItem(ADMIN_KEY, JSON.stringify(safeAdmin));
+
+  if (!admin) return null;
+
+  const safeAdmin = {
+    id: admin.id,
+    name: admin.name,
+    email: admin.email,
+    role: admin.role,
+    loginAt: new Date().toISOString(),
+  };
+
+  setCurrentAdmin(safeAdmin);
   return safeAdmin;
 }
 
+export function setCurrentAdmin(admin) {
+  writeJson(CURRENT_ADMIN_KEY, admin);
+}
+
 export function getCurrentAdmin() {
-  try {
-    return JSON.parse(storage()?.getItem(ADMIN_KEY) || "null");
-  } catch (error) {
-    return null;
-  }
+  return readJson(CURRENT_ADMIN_KEY, null);
 }
 
 export function logoutAdmin() {
-  storage()?.removeItem(ADMIN_KEY);
+  storage()?.removeItem(CURRENT_ADMIN_KEY);
+}
+
+export function setCurrentCustomer(customer) {
+  writeJson(CURRENT_CUSTOMER_KEY, customer);
+}
+
+export function getCurrentCustomer() {
+  return readJson(CURRENT_CUSTOMER_KEY, null);
+}
+
+export function logoutCustomer() {
+  storage()?.removeItem(CURRENT_CUSTOMER_KEY);
 }

@@ -6,13 +6,13 @@ import Home from "./pages/Home";
 import About from "./pages/About";
 import Services from "./pages/Services";
 import Projects from "./pages/Projects";
+import ProjectDetails from "./pages/ProjectDetails";
 import Downloads from "./pages/Downloads";
 import News from "./pages/News";
 import Career from "./pages/Career";
 import Contact from "./pages/Contact";
 import CustomerLogin from "./pages/CustomerLogin";
 import ServiceRequest from "./pages/ServiceRequest";
-import AdminLogin from "./pages/AdminLogin";
 import AdminDashboard from "./pages/AdminDashboard";
 import "./App.css";
 
@@ -24,10 +24,12 @@ export default function App() {
         <Route path="/about" element={<About />} />
         <Route path="/services" element={<Services />} />
         <Route path="/projects" element={<Projects />} />
+        <Route path="/projects/:projectId" element={<ProjectDetails />} />
         <Route path="/downloads" element={<Downloads />} />
         <Route path="/news" element={<News />} />
         <Route path="/career" element={<Career />} />
         <Route path="/contact" element={<Contact />} />
+        <Route path="/customer/login" element={<CustomerLogin />} />
         <Route
           path="/service-request"
           element={
@@ -38,8 +40,10 @@ export default function App() {
         />
       </Route>
 
-      <Route path="/customer/login" element={<CustomerLogin />} />
-      <Route path="/admin/login" element={<AdminLogin />} />
+      <Route
+  path="/admin/login"
+  element={<Navigate to="/customer/login" replace state={{ loginMode: "admin" }} />}
+/>
       <Route
         path="/admin/dashboard"
         element={

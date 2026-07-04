@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { supabase } from "../lib/supabase";
 import {
   createId,
   deleteContactMessage,
@@ -15,8 +16,9 @@ import { addAdminUser, deleteAdminUser, getAdminUsers, getCurrentAdmin, logoutAd
 
 const sections = [
   {
+    group: "Website",
     key: "siteSettings",
-    label: "Company Settings",
+    label: "Website Settings",
     type: "object",
     fields: [
       ["companyName", "Company Name", "text"],
@@ -28,40 +30,61 @@ const sections = [
       ["footerNote", "Footer Note", "text"],
     ],
   },
+
   {
+    group: "Home Page",
     key: "homeHighlights",
-    label: "Home Highlights",
+    label: "Home - Highlights",
     fields: [
       ["title", "Title", "text"],
       ["subtitle", "Subtitle", "text"],
     ],
   },
   {
+    group: "Home Page",
     key: "homeServices",
-    label: "Home Main Services",
+    label: "Home - Main Services",
     fields: [
       ["title", "Title", "text"],
       ["description", "Description", "textarea"],
     ],
   },
+
   {
+    group: "Services Page",
     key: "services",
-    label: "Services Page",
+    label: "Services",
     fields: [
       ["title", "Service Title", "text"],
       ["description", "Description", "textarea"],
     ],
   },
+
   {
+    group: "Projects Page",
     key: "projects",
     label: "Projects",
     fields: [
       ["title", "Project Title", "text"],
-      ["type", "Type", "text"],
+      ["type", "Project Type", "text"],
       ["description", "Description", "textarea"],
+      ["image", "Cover Image", "image"],
+      ["gallery", "Gallery Images", "images"],
     ],
   },
+
+ {
+  group: "Downloads Page",
+  key: "downloads",
+  label: "Documents / PDFs",
+  fields: [
+    ["title", "Document Title", "text"],
+    ["link", "PDF File", "document"],
+  ],
+},
+
   {
+    group: "News Page",
     key: "news",
     label: "News",
     fields: [
@@ -69,21 +92,16 @@ const sections = [
       ["description", "Description", "textarea"],
     ],
   },
+
   {
-    key: "downloads",
-    label: "Downloads",
-    fields: [
-      ["title", "Document Title", "text"],
-      ["note", "Note", "text"],
-      ["link", "PDF/Download Link", "text"],
-    ],
-  },
-  {
+    group: "Career Page",
     key: "careerRoles",
     label: "Career Roles",
     fields: [["title", "Role Title", "text"]],
   },
+
   {
+    group: "Contact Page",
     key: "contactBadges",
     label: "Contact Badges",
     fields: [["title", "Badge Title", "text"]],
@@ -94,8 +112,210 @@ function EmptyState({ text }) {
   return <div className="empty-state">{text}</div>;
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+
+    reader.readAsDataURL(file);
+  });
+}
+
+const DOCUMENT_BUCKET = "documents";
+
+function cleanFileName(name) {
+  return String(name || "document.pdf")
+    .toLowerCase()
+    .replace(/[^a-z0-9.]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+async function uploadPdfToSupabase(file) {
+  if (!file) {
+    throw new Error("Please select a PDF file.");
+  }
+
+  const isPdf =
+    file.type === "application/pdf" ||
+    file.name.toLowerCase().endsWith(".pdf");
+
+  if (!isPdf) {
+    throw new Error("Please upload only PDF files.");
+  }
+
+  const fileName = cleanFileName(file.name);
+  const filePath = `downloads/${Date.now()}-${fileName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(DOCUMENT_BUCKET)
+    .upload(filePath, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: "application/pdf",
+    });
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  const { data } = supabase.storage
+    .from(DOCUMENT_BUCKET)
+    .getPublicUrl(filePath);
+
+  return data.publicUrl;
+}
+
 function FieldInput({ field, value }) {
   const [name, label, type] = field;
+  const [storedValue, setStoredValue] = useState(value || "");
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  const handleFiles = async (fileList) => {
+    const files = Array.from(fileList || []);
+
+    if (!files.length) return;
+
+    if (type === "document") {
+      try {
+        setUploading(true);
+
+        const publicUrl = await uploadPdfToSupabase(files[0]);
+
+        setStoredValue(publicUrl);
+      } catch (error) {
+        alert(error.message || "PDF upload failed.");
+      } finally {
+        setUploading(false);
+      }
+
+      return;
+    }
+
+    if (type === "image") {
+      const file = files[0];
+
+      if (!file.type.startsWith("image/")) {
+        alert("Please upload an image file.");
+        return;
+      }
+
+      const dataUrl = await readFileAsDataUrl(file);
+      setStoredValue(dataUrl);
+      return;
+    }
+
+    if (type === "images") {
+      const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+
+      if (!imageFiles.length) {
+        alert("Please upload image files.");
+        return;
+      }
+
+      const dataUrls = await Promise.all(imageFiles.map(readFileAsDataUrl));
+      setStoredValue(dataUrls.join("\n"));
+    }
+  };
+
+  const stopDefaults = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  if (type === "image" || type === "images" || type === "document") {
+    const items = String(storedValue || "")
+      .split("\n")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    return (
+      <label>
+        {label}
+
+        <div
+          className={`drop-zone ${dragging ? "is-dragging" : ""}`}
+          onDragEnter={(event) => {
+            stopDefaults(event);
+            setDragging(true);
+          }}
+          onDragOver={stopDefaults}
+          onDragLeave={(event) => {
+            stopDefaults(event);
+            setDragging(false);
+          }}
+          onDrop={(event) => {
+            stopDefaults(event);
+            setDragging(false);
+            handleFiles(event.dataTransfer.files);
+          }}
+        >
+          <input
+            className="drop-zone__input"
+            type="file"
+            accept={type === "document" ? ".pdf,application/pdf" : "image/*"}
+            multiple={type === "images"}
+            onChange={(event) => handleFiles(event.target.files)}
+          />
+
+          <strong>
+            {uploading
+              ? "Uploading..."
+              : type === "document"
+              ? "Select PDF from your PC"
+              : "Drag & drop image here"}
+          </strong>
+
+          <span>
+            {type === "document"
+              ? "Click here and choose PDF"
+              : "or click to choose file"}
+          </span>
+        </div>
+
+        <input type="hidden" name={name} value={storedValue} />
+
+        {items.length ? (
+          <div className="upload-preview">
+            {type === "document" ? (
+              <>
+                <span className="document-preview">PDF uploaded</span>
+
+                <a
+                  className="view-document-btn"
+                  href={storedValue}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  View PDF
+                </a>
+              </>
+            ) : (
+              items.map((item, index) => (
+                <img
+                  key={`${item}-${index}`}
+                  src={item}
+                  alt={`${label} ${index + 1}`}
+                />
+              ))
+            )}
+
+            <button
+              className="clear-upload"
+              type="button"
+              onClick={() => setStoredValue("")}
+            >
+              Remove
+            </button>
+          </div>
+        ) : null}
+      </label>
+    );
+  }
+
   if (type === "textarea") {
     return (
       <label>
@@ -104,6 +324,7 @@ function FieldInput({ field, value }) {
       </label>
     );
   }
+
   return (
     <label>
       {label}
@@ -148,6 +369,12 @@ export default function AdminDashboard() {
     activeSection.fields.forEach(([key]) => {
       item[key] = String(form.get(key) || "").trim();
     });
+    if (active === "downloads" && item.link.startsWith("data:")) {
+  setNotice(
+    "Wrong PDF link. Please select the PDF again. It must upload to Supabase Storage."
+  );
+  return;
+}
 
     let nextList;
     if (editingItem) {
@@ -244,26 +471,55 @@ export default function AdminDashboard() {
           <span>{admin?.name || "Admin"}</span>
         </div>
         <nav>
-          {sections.map((section) => (
-            <button
-              key={section.key}
-              className={active === section.key ? "active" : ""}
-              type="button"
-              onClick={() => setSection(section.key)}
-            >
-              {section.label}
-            </button>
-          ))}
-          <button className={active === "serviceRequests" ? "active" : ""} type="button" onClick={() => setSection("serviceRequests")}>
-            Service Requests
-          </button>
-          <button className={active === "contactMessages" ? "active" : ""} type="button" onClick={() => setSection("contactMessages")}>
-            Contact Messages
-          </button>
-          <button className={active === "adminUsers" ? "active" : ""} type="button" onClick={() => setSection("adminUsers")}>
-            Admin Users
-          </button>
-        </nav>
+  {sections.map((section, index) => {
+    const previousGroup = sections[index - 1]?.group;
+    const showGroupTitle = section.group !== previousGroup;
+
+    return (
+      <React.Fragment key={section.key}>
+        {showGroupTitle ? (
+          <span className="admin-nav-group">{section.group}</span>
+        ) : null}
+
+        <button
+          className={active === section.key ? "active" : ""}
+          type="button"
+          onClick={() => setSection(section.key)}
+        >
+          {section.label}
+        </button>
+      </React.Fragment>
+    );
+  })}
+
+  <span className="admin-nav-group">Customer Data</span>
+
+  <button
+    className={active === "serviceRequests" ? "active" : ""}
+    type="button"
+    onClick={() => setSection("serviceRequests")}
+  >
+    Service Requests
+  </button>
+
+  <button
+    className={active === "contactMessages" ? "active" : ""}
+    type="button"
+    onClick={() => setSection("contactMessages")}
+  >
+    Contact Messages
+  </button>
+
+  <span className="admin-nav-group">Admin</span>
+
+  <button
+    className={active === "adminUsers" ? "active" : ""}
+    type="button"
+    onClick={() => setSection("adminUsers")}
+  >
+    Admin Users
+  </button>
+</nav>
         <button className="admin-logout" type="button" onClick={handleLogout}>Logout</button>
       </aside>
 
@@ -316,7 +572,6 @@ export default function AdminDashboard() {
                         <strong>{item.title}</strong>
                         {item.type ? <span>{item.type}</span> : null}
                         {item.subtitle ? <span>{item.subtitle}</span> : null}
-                        {item.note ? <span>{item.note}</span> : null}
                         {item.description ? <p>{item.description}</p> : null}
                       </div>
                       <div className="admin-actions">

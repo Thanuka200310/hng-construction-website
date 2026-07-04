@@ -1,85 +1,235 @@
 import React, { useMemo, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { getCurrentCustomer, logoutCustomer, setCurrentCustomer } from "../utils/authStore";
+import { Link, useNavigate } from "react-router-dom";
+import { supabase } from "../lib/supabase";
+import {
+  getCurrentAdmin,
+  getCurrentCustomer,
+  logoutAdmin,
+  logoutCustomer,
+  setCurrentAdmin,
+  setCurrentCustomer,
+} from "../utils/authStore";
 
-const createCode = () => String(Math.floor(100000 + Math.random() * 900000));
 
 export default function CustomerLogin() {
   const navigate = useNavigate();
-  const location = useLocation();
+
   const existingCustomer = useMemo(() => getCurrentCustomer(), []);
+  const existingAdmin = useMemo(() => getCurrentAdmin(), []);
+
   const [customer, setCustomer] = useState(existingCustomer);
-  const [pending, setPending] = useState(null);
+  const [admin, setAdmin] = useState(existingAdmin);
+  const [mode, setMode] = useState("login");
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const fromLocation = location.state?.from;
-const returnPath = fromLocation
-  ? `${fromLocation.pathname}${fromLocation.search || ""}`
-  : "/service-request";
+ const handleLogin = async (event) => {
+  event.preventDefault();
+  setMessage("");
+  setError("");
+  setLoading(true);
 
-  const startLogin = (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const name = String(form.get("name") || "").trim();
-    const email = String(form.get("email") || "").trim();
-    const phone = String(form.get("phone") || "").trim();
+  const form = new FormData(event.currentTarget);
+  const email = String(form.get("email") || "").trim();
+  const password = String(form.get("password") || "");
 
-    if (!email && !phone) {
-      setMessage("Please enter phone number or email to receive the verification code.");
-      return;
-    }
+  if (!email || !password) {
+    setError("Please enter email and password.");
+    setLoading(false);
+    return;
+  }
 
-    const code = createCode();
-    setPending({ name, email, phone, code });
-    setMessage("Verification code generated. In production this code should be sent by SMS or email using backend OTP service.");
-  };
+  const { data, error: loginError } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
 
-  const verifyCode = (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const code = String(form.get("code") || "").trim();
+  if (loginError) {
+    setError(loginError.message);
+    setLoading(false);
+    return;
+  }
 
-    if (code !== pending?.code) {
-      setMessage("Invalid verification code. Please check and try again.");
-      return;
-    }
+  const user = data.user;
 
-    const nextCustomer = {
-      id: `customer-${Date.now()}`,
-      name: pending.name || "Customer",
-      email: pending.email,
-      phone: pending.phone,
-      loginAt: new Date().toISOString(),
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("id, name, email, phone, role, status")
+    .eq("id", user.id)
+    .single();
+
+  if (profileError || !profile) {
+    setError("Profile not found. Please contact admin.");
+    setLoading(false);
+    return;
+  }
+
+  if (profile.status === "deleted") {
+    setError("This account has been disabled by admin.");
+    await supabase.auth.signOut();
+    setLoading(false);
+    return;
+  }
+
+  await supabase
+    .from("profiles")
+    .update({
+      last_login_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", user.id);
+
+  if (profile.role === "admin") {
+    const safeAdmin = {
+      id: user.id,
+      name: profile.name || "Admin",
+      email: profile.email || user.email,
+      phone: profile.phone || "",
+      role: "admin",
     };
 
-    setCurrentCustomer(nextCustomer);
-    setCustomer(nextCustomer);
-    navigate(returnPath, { replace: true });
+    logoutCustomer();
+    setCurrentAdmin(safeAdmin);
+    setAdmin(safeAdmin);
+    setCustomer(null);
+    navigate("/admin/dashboard", { replace: true });
+    return;
+  }
+
+  const safeCustomer = {
+    id: user.id,
+    name: profile.name || "Customer",
+    email: profile.email || user.email,
+    phone: profile.phone || "",
+    role: "customer",
+    loginAt: new Date().toISOString(),
   };
+
+  logoutAdmin();
+  setCurrentCustomer(safeCustomer);
+  setCustomer(safeCustomer);
+  setAdmin(null);
+  navigate("/service-request", { replace: true });
+};
+
+ const handleRegister = async (event) => {
+  event.preventDefault();
+  setMessage("");
+  setError("");
+  setLoading(true);
+
+  const form = new FormData(event.currentTarget);
+  const name = String(form.get("name") || "").trim();
+  const phone = String(form.get("phone") || "").trim();
+  const email = String(form.get("email") || "").trim();
+  const password = String(form.get("password") || "");
+  const confirmPassword = String(form.get("confirmPassword") || "");
+
+  if (!name || !phone || !email || !password) {
+    setError("Please fill all required fields.");
+    setLoading(false);
+    return;
+  }
+
+  if (password.length < 6) {
+    setError("Password must be at least 6 characters.");
+    setLoading(false);
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    setError("Passwords do not match.");
+    setLoading(false);
+    return;
+  }
+
+  const { error: signupError } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      data: {
+        name,
+        phone,
+        role: "customer",
+      },
+    },
+  });
+
+  if (signupError) {
+    setError(signupError.message);
+    setLoading(false);
+    return;
+  }
+
+  setMessage("Account created successfully. Please login.");
+  setMode("login");
+  setLoading(false);
+};
 
   const handleLogout = () => {
     logoutCustomer();
+    logoutAdmin();
+
     setCustomer(null);
-    setPending(null);
-    setMessage("Customer logged out.");
+    setAdmin(null);
+    setMessage("Logged out successfully.");
+    setError("");
   };
+
+  if (admin) {
+    return (
+      <section className="auth-page">
+        <div className="auth-card">
+          <p className="kicker">Admin Profile</p>
+          <h1>You are logged in</h1>
+          <p className="muted">
+            You can manage website content from the admin dashboard.
+          </p>
+
+          <div className="account-box">
+            <strong>{admin.name}</strong>
+            <span>{admin.email}</span>
+          </div>
+
+          <div className="auth-actions">
+            <Link className="btn btn--primary" to="/admin/dashboard">
+              Admin Dashboard
+            </Link>
+
+            <button className="btn btn--light" type="button" onClick={handleLogout}>
+              Logout
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   if (customer) {
     return (
       <section className="auth-page">
         <div className="auth-card">
-          <p className="kicker">Customer Account</p>
+          <p className="kicker">Customer Profile</p>
           <h1>You are logged in</h1>
-          <p className="muted">Use your account to request HNG Construction services.</p>
+          <p className="muted">
+            You can request HNG Construction services using this account.
+          </p>
+
           <div className="account-box">
             <strong>{customer.name}</strong>
             <span>{customer.email || customer.phone}</span>
           </div>
+
           <div className="auth-actions">
-            <Link className="btn btn--primary" to="/service-request">Request Service</Link>
-            <button className="btn btn--light" type="button" onClick={handleLogout}>Logout</button>
+            <Link className="btn btn--primary" to="/service-request">
+              Request Service
+            </Link>
+
+            <button className="btn btn--light" type="button" onClick={handleLogout}>
+              Logout
+            </button>
           </div>
-          <Link className="small-link" to="/">← Back to website</Link>
         </div>
       </section>
     );
@@ -89,52 +239,128 @@ const returnPath = fromLocation
     <section className="auth-page">
       <div className="auth-card auth-card--wide">
         <div>
-          <p className="kicker">Customer Login</p>
-          <h1>Login to request a service</h1>
+          <p className="kicker">Account Access</p>
+          <h1>Login or create an account</h1>
+
           <p className="muted">
-            Everyone can view the website without login. Customers only need login when they want to request HNG
-            Construction services.
+            Customers can create an account to request services. Admin users can
+            login from the same login form using their admin email and password.
           </p>
-          <div className="notice-box">
-            Demo OTP is shown on screen because this project is static React. Connect Firebase, Supabase, Twilio, or an email
-            API for real SMS/email OTP.
-          </div>
         </div>
 
         <div className="panel">
-          {!pending ? (
-            <form className="form form--compact" onSubmit={startLogin}>
-              <label>
-                Name
-                <input name="name" type="text" placeholder="Your name" />
-              </label>
-              <label>
-                Phone Number
-                <input name="phone" type="tel" placeholder="+94 77 000 0000" />
-              </label>
+          <div className="auth-tabs">
+            <button
+              className={mode === "login" ? "active" : ""}
+              type="button"
+              onClick={() => {
+                setMode("login");
+                setMessage("");
+                setError("");
+              }}
+            >
+              Login
+            </button>
+
+            <button
+              className={mode === "register" ? "active" : ""}
+              type="button"
+              onClick={() => {
+                setMode("register");
+                setMessage("");
+                setError("");
+              }}
+            >
+              Register
+            </button>
+          </div>
+
+          {mode === "login" ? (
+            <form className="form form--compact" onSubmit={handleLogin}>
               <label>
                 Email
-                <input name="email" type="email" placeholder="your@email.com" />
+                <input
+                  name="email"
+                  type="email"
+                  placeholder="your@email.com"
+                  required
+                />
               </label>
-              <button className="btn btn--primary" type="submit">Send Verification Code</button>
+
+              <label>
+                Password
+                <input
+                  name="password"
+                  type="password"
+                  placeholder="Enter your password"
+                  required
+                />
+              </label>
+
+              <button className="btn btn--primary" type="submit" disabled={loading}>
+  {loading ? "Please wait..." : "Login"}
+</button>
             </form>
           ) : (
-            <form className="form form--compact" onSubmit={verifyCode}>
-              <div className="otp-demo">
-                <span>Demo verification code</span>
-                <strong>{pending.code}</strong>
-              </div>
+            <form className="form form--compact" onSubmit={handleRegister}>
               <label>
-                Enter Code
-                <input name="code" type="text" inputMode="numeric" maxLength="6" placeholder="6 digit code" required />
+                Name
+                <input
+                  name="name"
+                  type="text"
+                  placeholder="Your name"
+                  required
+                />
               </label>
-              <button className="btn btn--primary" type="submit">Verify & Login</button>
-              <button className="btn btn--light" type="button" onClick={() => setPending(null)}>Change Details</button>
+
+              <label>
+                Phone Number
+                <input
+                  name="phone"
+                  type="tel"
+                  placeholder="+94 77 000 0000"
+                  required
+                />
+              </label>
+
+              <label>
+                Email
+                <input
+                  name="email"
+                  type="email"
+                  placeholder="your@email.com"
+                  required
+                />
+              </label>
+
+              <label>
+                Password
+                <input
+                  name="password"
+                  type="password"
+                  placeholder="Create password"
+                  required
+                />
+              </label>
+
+              <label>
+                Confirm Password
+                <input
+                  name="confirmPassword"
+                  type="password"
+                  placeholder="Confirm password"
+                  required
+                />
+              </label>
+
+              <button className="btn btn--primary" type="submit" disabled={loading}>
+  {loading ? "Please wait..." : "Register"}
+</button>
             </form>
           )}
+
           {message ? <p className="success-message">{message}</p> : null}
-          <Link className="small-link" to="/admin/login">Admin Login</Link>
-          <Link className="small-link" to="/">← Back to website</Link>
+          {error ? <p className="error-message">{error}</p> : null}
         </div>
       </div>
     </section>
