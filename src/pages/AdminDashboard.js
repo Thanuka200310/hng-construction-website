@@ -112,16 +112,6 @@ function EmptyState({ text }) {
   return <div className="empty-state">{text}</div>;
 }
 
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-
-    reader.readAsDataURL(file);
-  });
-}
 
 const DOCUMENT_BUCKET = "documents";
 const IMAGE_BUCKET = "project-images";
