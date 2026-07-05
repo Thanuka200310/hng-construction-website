@@ -1,5 +1,5 @@
-import React, { useMemo } from "react";
-import { getContent } from "../data/siteContent";
+import React, { useEffect, useState } from "react";
+import { getContent, getContentOnline } from "../data/siteContent";
 
 function hasValidLink(link) {
   return (
@@ -11,7 +11,11 @@ function hasValidLink(link) {
 }
 
 export default function Downloads() {
-  const content = useMemo(() => getContent(), []);
+  const [content, setContent] = useState(() => getContent());
+
+  useEffect(() => {
+    getContentOnline().then(setContent);
+  }, []);
 
   return (
     <>

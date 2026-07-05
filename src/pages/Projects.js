@@ -1,9 +1,13 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getContent } from "../data/siteContent";
+import { getContent, getContentOnline } from "../data/siteContent";
 
 export default function Projects() {
-  const content = useMemo(() => getContent(), []);
+  const [content, setContent] = useState(() => getContent());
+
+  useEffect(() => {
+    getContentOnline().then(setContent);
+  }, []);
 
   return (
     <>

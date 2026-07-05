@@ -1,3 +1,4 @@
+import { supabase } from "../lib/supabase";
 const CONTENT_KEY = "hng_site_content_v1";
 const REQUESTS_KEY = "hng_service_requests_v1";
 const CONTACT_MESSAGES_KEY = "hng_contact_messages_v1";
@@ -136,6 +137,17 @@ const uid = (prefix = "item") => `${prefix}-${Date.now()}-${Math.random().toStri
 
 export const createId = uid;
 
+export function mergeContent(savedContent = {}) {
+  return {
+    ...defaultContent,
+    ...savedContent,
+    siteSettings: {
+      ...defaultContent.siteSettings,
+      ...(savedContent.siteSettings || {}),
+    },
+  };
+}
+
 export function getContent() {
   const storage = browserStorage();
   if (!storage) return defaultContent;
@@ -143,22 +155,49 @@ export function getContent() {
   try {
     const saved = storage.getItem(CONTENT_KEY);
     if (!saved) return defaultContent;
-    const parsed = JSON.parse(saved);
-    return {
-      ...defaultContent,
-      ...parsed,
-      siteSettings: { ...defaultContent.siteSettings, ...(parsed.siteSettings || {}) },
-    };
+
+    return mergeContent(JSON.parse(saved));
   } catch (error) {
-    console.error("Failed to load site content", error);
+    console.error("Failed to load local site content", error);
     return defaultContent;
   }
 }
 
-export function saveContent(content) {
+export async function getContentOnline() {
+  const { data, error } = await supabase
+    .from("site_content")
+    .select("content")
+    .eq("id", "main")
+    .single();
+
+  if (error) {
+    console.error("Failed to load Supabase content", error);
+    return getContent();
+  }
+
+  const nextContent = mergeContent(data?.content || {});
+
   const storage = browserStorage();
-  if (!storage) return;
-  storage.setItem(CONTENT_KEY, JSON.stringify(content));
+  storage?.setItem(CONTENT_KEY, JSON.stringify(nextContent));
+
+  return nextContent;
+}
+
+export async function saveContent(content) {
+  const storage = browserStorage();
+  storage?.setItem(CONTENT_KEY, JSON.stringify(content));
+
+  const { error } = await supabase
+    .from("site_content")
+    .upsert({
+      id: "main",
+      content,
+      updated_at: new Date().toISOString(),
+    });
+
+  if (error) {
+    throw error;
+  }
 }
 
 export function resetContent() {

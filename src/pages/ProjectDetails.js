@@ -1,6 +1,6 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getContent } from "../data/siteContent";
+import { getContent, getContentOnline } from "../data/siteContent";
 
 function splitGallery(value) {
   if (!value) return [];
@@ -13,7 +13,11 @@ function splitGallery(value) {
 
 export default function ProjectDetails() {
   const { projectId } = useParams();
-  const content = useMemo(() => getContent(), []);
+  const [content, setContent] = useState(() => getContent());
+
+  useEffect(() => {
+    getContentOnline().then(setContent);
+  }, []);
 
   const project = content.projects.find((item) => item.id === projectId);
 
@@ -57,7 +61,7 @@ export default function ProjectDetails() {
             <div className="project-details-gallery">
               {uniqueImages.map((image, index) => (
                 <a
-                  key={`${index}-${image.slice(0, 30)}`}
+                  key={`${index}-${image.slice(0, 50)}`}
                   href={image}
                   target="_blank"
                   rel="noreferrer"

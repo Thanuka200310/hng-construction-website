@@ -124,6 +124,7 @@ function readFileAsDataUrl(file) {
 }
 
 const DOCUMENT_BUCKET = "documents";
+const IMAGE_BUCKET = "project-images";
 
 function cleanFileName(name) {
   return String(name || "document.pdf")
@@ -167,6 +168,36 @@ async function uploadPdfToSupabase(file) {
 
   return data.publicUrl;
 }
+async function uploadImageToSupabase(file) {
+  if (!file) {
+    throw new Error("Please select an image.");
+  }
+
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Please upload image files only.");
+  }
+
+  const fileName = cleanFileName(file.name);
+  const filePath = `projects/${Date.now()}-${fileName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(IMAGE_BUCKET)
+    .upload(filePath, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: file.type,
+    });
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  const { data } = supabase.storage
+    .from(IMAGE_BUCKET)
+    .getPublicUrl(filePath);
+
+  return data.publicUrl;
+}
 
 function FieldInput({ field, value }) {
   const [name, label, type] = field;
@@ -175,40 +206,44 @@ function FieldInput({ field, value }) {
   const [uploading, setUploading] = useState(false);
 
   const handleFiles = async (fileList) => {
-    const files = Array.from(fileList || []);
+  const files = Array.from(fileList || []);
 
-    if (!files.length) return;
+  if (!files.length) return;
 
-    if (type === "document") {
-      try {
-        setUploading(true);
+  if (type === "document") {
+    try {
+      setUploading(true);
 
-        const publicUrl = await uploadPdfToSupabase(files[0]);
-
-        setStoredValue(publicUrl);
-      } catch (error) {
-        alert(error.message || "PDF upload failed.");
-      } finally {
-        setUploading(false);
-      }
-
-      return;
+      const publicUrl = await uploadPdfToSupabase(files[0]);
+      setStoredValue(publicUrl);
+    } catch (error) {
+      alert(error.message || "PDF upload failed.");
+    } finally {
+      setUploading(false);
     }
 
-    if (type === "image") {
-      const file = files[0];
+    return;
+  }
 
-      if (!file.type.startsWith("image/")) {
-        alert("Please upload an image file.");
-        return;
-      }
+  if (type === "image") {
+    try {
+      setUploading(true);
 
-      const dataUrl = await readFileAsDataUrl(file);
-      setStoredValue(dataUrl);
-      return;
+      const publicUrl = await uploadImageToSupabase(files[0]);
+      setStoredValue(publicUrl);
+    } catch (error) {
+      alert(error.message || "Image upload failed.");
+    } finally {
+      setUploading(false);
     }
 
-    if (type === "images") {
+    return;
+  }
+
+  if (type === "images") {
+    try {
+      setUploading(true);
+
       const imageFiles = files.filter((file) => file.type.startsWith("image/"));
 
       if (!imageFiles.length) {
@@ -216,10 +251,18 @@ function FieldInput({ field, value }) {
         return;
       }
 
-      const dataUrls = await Promise.all(imageFiles.map(readFileAsDataUrl));
-      setStoredValue(dataUrls.join("\n"));
+      const publicUrls = await Promise.all(
+        imageFiles.map((file) => uploadImageToSupabase(file))
+      );
+
+      setStoredValue(publicUrls.join("\n"));
+    } catch (error) {
+      alert(error.message || "Gallery image upload failed.");
+    } finally {
+      setUploading(false);
     }
-  };
+  }
+};
 
   const stopDefaults = (event) => {
     event.preventDefault();
@@ -262,12 +305,14 @@ function FieldInput({ field, value }) {
           />
 
           <strong>
-            {uploading
-              ? "Uploading..."
-              : type === "document"
-              ? "Select PDF from your PC"
-              : "Drag & drop image here"}
-          </strong>
+  {uploading
+    ? "Uploading..."
+    : type === "document"
+    ? "Select PDF from your PC"
+    : type === "images"
+    ? "Select project gallery images"
+    : "Select project cover image"}
+</strong>
 
           <span>
             {type === "document"
@@ -346,12 +391,16 @@ export default function AdminDashboard() {
 
   const activeSection = sections.find((section) => section.key === active);
 
-  const updateContent = (nextContent, message = "Changes saved.") => {
-    setContent(nextContent);
-    saveContent(nextContent);
-    setNotice(message);
-  };
+  const updateContent = async (nextContent, message = "Changes saved.") => {
+  setContent(nextContent);
 
+  try {
+    await saveContent(nextContent);
+    setNotice(message);
+  } catch (error) {
+    setNotice(error.message || "Failed to save content to Supabase.");
+  }
+};
   const submitObjectSection = (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
